@@ -14,7 +14,10 @@
 
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	"errors"
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+)
 
 // RaftLog manage the log entries, its struct look like:
 //
@@ -55,8 +58,15 @@ type RaftLog struct {
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
+	return &RaftLog{
+		storage:         storage,
+		committed:       0,
+		applied:         0,
+		stabled:         0,
+		entries:         make([]pb.Entry, 0),
+		pendingSnapshot: nil,
+	}
 	// Your Code Here (2A).
-	return nil
 }
 
 // We need to compact the log entries in some point of time like
@@ -80,12 +90,60 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
+	if len(l.entries) > 0 {
+		return l.entries[len(l.entries)-1].Index
+	}
+	i, _ := l.storage.LastIndex()
+	return i
 	// Your Code Here (2A).
-	return 0
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
+	lastIndex := l.LastIndex()
+	if i > lastIndex {
+		return 0, errors.New("more than last index")
+	}
+	if len(l.entries) > 0 && i >= l.entries[0].Index {
+		for _, e := range l.entries {
+			if e.Index == i {
+				return e.Term, nil
+			}
+		}
+		return 0, errors.New("index not found")
+	} else {
+		res, err := l.storage.Term(i)
+		return res, err
+	}
 	// Your Code Here (2A).
-	return 0, nil
+}
+
+// return entry position
+func (l *RaftLog) findByIndex(index uint64) (uint64, error) {
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		if l.entries[i].Index == index {
+			return uint64(i), nil
+		}
+	}
+	return 0, errors.New("entry not found")
+}
+
+// return position in log , position in entry
+func (l *RaftLog) findLastMatch(beginPosition uint64, entry []*pb.Entry) (uint64, uint64) {
+	i := uint64(0)
+	for ; beginPosition+i < uint64(len(l.entries)) && i < uint64(len(entry)); i++ {
+		localEntry := l.entries[beginPosition+i]
+		e := entry[i]
+		if localEntry.Index != e.Index || localEntry.Term != e.Term {
+			break
+		}
+	}
+	return beginPosition + i - 1, i - 1
+}
+
+func (l *RaftLog) append(entries []*pb.Entry) {
+	for _, e := range entries {
+		l.entries = append(l.entries, *e)
+	}
+
 }

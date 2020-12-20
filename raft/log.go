@@ -145,5 +145,4 @@ func (l *RaftLog) append(entries []*pb.Entry) {
 	for _, e := range entries {
 		l.entries = append(l.entries, *e)
 	}
-
 }

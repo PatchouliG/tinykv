@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"math/rand"
 )
@@ -187,15 +186,16 @@ func newRaft(c *Config) *Raft {
 	}
 
 	return &Raft{
-		id:                    c.ID,
-		Term:                  hardStatus.Commit,
-		Vote:                  hardStatus.Vote,
-		RaftLog:               newLog(c.Storage),
-		Prs:                   nil,
+		id:      c.ID,
+		Term:    hardStatus.Commit,
+		Vote:    hardStatus.Vote,
+		RaftLog: newLog(c.Storage),
+		Prs:     nil,
+		// init as a follower
 		State:                 StateFollower,
-		votes:                 votes,
+		votes:                 nil,
 		msgs:                  make([]pb.Message, 0),
-		Lead:                  0,
+		Lead:                  None,
 		heartbeatTimeout:      c.HeartbeatTick,
 		electionTimeout:       c.ElectionTick,
 		randomElectionTimeout: randomTimeout(c.ElectionTick),
@@ -225,6 +225,12 @@ func (r *Raft) sendAppend(to uint64) bool {
 	if matched < lastIndex {
 		msg := r.buildMsgWithoutData(pb.MessageType_MsgAppend, to, false)
 		msg.Entries = entryValuesToPoints(r.RaftLog.entries[matched+1:])
+		msg.Index = prs.Match
+		t, err := r.RaftLog.Term(prs.Match)
+		if err != nil {
+			panic("error ")
+		}
+		msg.LogTerm = t
 		r.appendMsg(msg)
 		//update prs
 		r.Prs[to] = &Progress{
@@ -247,10 +253,9 @@ func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
 }
 
-func (r *Raft) addHeartBeatToLog() pb.Entry {
+func (r *Raft) addNoopEntryToLog() {
 	e := r.buildEmptyEntry()
 	r.RaftLog.entries = append(r.RaftLog.entries, e)
-	return e
 }
 
 func (r *Raft) sendVote(to uint64) {
@@ -265,7 +270,6 @@ func (r *Raft) sendVote(to uint64) {
 
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
-	// todo change state by node
 
 	switch r.State {
 	case StateFollower:
@@ -275,7 +279,7 @@ func (r *Raft) tick() {
 		}
 	case StateCandidate:
 		r.electionElapsed += 1
-		if r.electionElapsed > r.randomElectionTimeout {
+		if r.electionElapsed >= r.randomElectionTimeout {
 			r.handleMsgUp()
 		}
 
@@ -283,36 +287,15 @@ func (r *Raft) tick() {
 		// todo append retry is 1 logic clock
 		r.sendMsgToAll(r.sendAppendWrap)
 		if r.heartbeatElapsed == 0 {
-			r.sendHeartToAll()
+			r.sendHeartBeatToAll()
 		}
 		r.heartbeatElapsed = (r.heartbeatElapsed + 1) % r.heartbeatTimeout
 	}
 
-	//if r.State == StateLeader {
-	//	// send heart beat
-	//	if r.heartbeatElapsed >= r.heartbeatTimeout {
-	//		for _, nodeId := range r.nodes {
-	//			if nodeId == r.id {
-	//				continue
-	//			}
-	//			r.sendHeartbeat(nodeId)
-	//		}
-	//		r.heartbeatElapsed = 0
-	//	}
-	//
-
-	//	// append entry every tick
-	//}
-
-	//election timeout
-	//if r.State != StateLeader && r.electionElapsed > r.electionTimeout {
-	//	r.becomeCandidate()
-	//}
 	// Your Code Here (2A).
 }
 
-func (r *Raft) sendHeartToAll() {
-	//r.addHeartBeatToLog()
+func (r *Raft) sendHeartBeatToAll() {
 	r.sendMsgToAll(r.sendHeartbeat)
 }
 
@@ -358,30 +341,9 @@ func (r *Raft) becomeLeader() {
 	}
 	r.Prs = prs
 
-	// add entry
-	//entry := pb.Entry{
-	//	EntryType: pb.EntryType_EntryNormal,
-	//	Term:      r.Term,
-	//	Index:     r.RaftLog.LastIndex() + 1,
-	//	Data:      nil,
-	//}
-
-	//r.RaftLog.entries = append(r.RaftLog.entries, entry)
-
-	//e := make([]*pb.Entry, 0)
-	//e = append(e, &r.RaftLog.entries[len(r.RaftLog.entries)-1])
-	//for _, nodeId := range r.nodes {
-	//	r.msgs = append(r.msgs, pb.Message{
-	//		MsgType: pb.MessageType_MsgAppend,
-	//		To:      nodeId,
-	//		From:    r.id,
-	//		Term:    r.Term,
-	//		LogTerm: r.Term,
-	//		Index:   r.RaftLog.LastIndex(),
-	//		Entries: e,
-	//	})
-	//}
 	// NOTE: Leader should propose a noop entry on its term
+	r.addNoopEntryToLog()
+	r.sendMsgToAll(r.sendAppendWrap)
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -457,7 +419,7 @@ func (r *Raft) Step(m pb.Message) error {
 		case pb.MessageType_MsgAppendResponse:
 			r.handleAppendResp(m)
 		case pb.MessageType_MsgBeat:
-			r.sendHeartToAll()
+			r.sendHeartBeatToAll()
 		case pb.MessageType_MsgRequestVote:
 			if m.Term > r.Term {
 				r.becomeFollower(m.Term, None)
@@ -492,12 +454,20 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	//r.handleAppendEntries(m)
 	//}
 
-	// todo the entry may be save in storage
-	// reject if prevPosition entry not findLastMatch
-	prevPosition, err := r.RaftLog.findByIndex(m.Index)
-	if err != nil || r.RaftLog.entries[prevPosition].Term != m.LogTerm {
-		r.appendMsg(r.buildReject(pb.MessageType_MsgAppendResponse, m.From))
-		return
+	var prevPosition uint64
+	if len(r.RaftLog.entries) == 0 || m.Index < r.RaftLog.entries[0].Index {
+		term, err := r.RaftLog.storage.Term(m.Index)
+		if err != nil || term != m.LogTerm {
+			r.appendMsg(r.buildReject(pb.MessageType_MsgAppendResponse, m.From))
+			return
+		}
+	} else {
+		// reject if prevPosition entry not findLastMatch
+		prevPosition, err := r.RaftLog.findByIndex(m.Index)
+		if err != nil || r.RaftLog.entries[prevPosition].Term != m.LogTerm {
+			r.appendMsg(r.buildReject(pb.MessageType_MsgAppendResponse, m.From))
+			return
+		}
 	}
 
 	//if len(m.Entries) == 0 {
@@ -563,13 +533,12 @@ func (r *Raft) handleVoteResponse(m pb.Message) {
 	if len(r.votes) >= len(r.nodes)/2+1 {
 		r.becomeLeader()
 	}
-	//r.addHeartBeatToLog()
+	//r.addNoopEntryToLog()
 	//r.sendMsgToAll(r.sendHeartbeat)
 }
 
 func (r *Raft) handleVoter(m pb.Message) {
 	reject := true
-	// todo check if voter's log is more up to date
 	lastIndex := r.RaftLog.LastIndex()
 	lastTerm, err := r.RaftLog.Term(lastIndex)
 	if err != nil {
@@ -596,9 +565,15 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 			Next:  oldPrs.Next,
 		}
 	} else {
+		var match uint64
+		if oldPrs.Match == 0 {
+			match = 0
+		} else {
+			match = oldPrs.Match - 1
+		}
 		r.Prs[nodeId] = &Progress{
-			Match: oldPrs.Match - 1,
-			Next:  oldPrs.Match,
+			Match: match,
+			Next:  match + 1,
 		}
 	}
 	// append fail
@@ -651,18 +626,13 @@ func (r *Raft) buildReject(messageType pb.MessageType, to uint64) pb.Message {
 
 // fill reject
 func (r *Raft) buildMsgWithoutData(messageType pb.MessageType, to uint64, reject bool) pb.Message {
-	lastIndex := r.RaftLog.LastIndex()
-	lastTerm, err := r.RaftLog.Term(lastIndex)
-	if err != nil {
-		log.Panicf("term not found for %d", lastIndex)
-	}
 	return pb.Message{
 		MsgType:  messageType,
 		To:       to,
 		From:     r.id,
 		Term:     r.Term,
-		LogTerm:  lastTerm,
-		Index:    lastIndex,
+		LogTerm:  0,
+		Index:    0,
 		Entries:  nil,
 		Commit:   0,
 		Snapshot: nil,
@@ -690,11 +660,3 @@ func isCandidateMsg(m pb.Message) bool {
 	msgType := m.MsgType
 	return msgType == pb.MessageType_MsgRequestVote
 }
-
-// todo unused
-//func msgIsLocal(m pb.Message) bool {
-//	msgType := m.GetMsgType()
-//	return msgType == pb.MessageType_MsgBeat ||
-//		msgType == pb.MessageType_MsgHup ||
-//		msgType == pb.MessageType_MsgPropose
-//}

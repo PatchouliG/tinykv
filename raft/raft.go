@@ -255,16 +255,10 @@ func (r *Raft) sendHeartbeat(to uint64) {
 
 func (r *Raft) addNoopEntryToLog() {
 	e := r.buildEmptyEntry()
-	r.RaftLog.entries = append(r.RaftLog.entries, e)
+	r.RaftLog.appendEntry(&e)
 }
 
 func (r *Raft) sendVote(to uint64) {
-	//r.appendMsg(pb.Message{
-	//	MsgType: pb.MessageType_MsgRequestVote,
-	//	To:      to,
-	//	From:    r.id,
-	//	Term:    r.Term,
-	//})
 	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgRequestVote, to, false))
 }
 
@@ -447,13 +441,6 @@ func (r *Raft) handleMsgUp() {
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 
-	// change state, reset follower info
-	//if m.Term > r.Term {
-	//	r.becomeFollower(m.Term, m.From)
-	//	only append entry as follower
-	//r.handleAppendEntries(m)
-	//}
-
 	var prevPosition uint64
 	if len(r.RaftLog.entries) == 0 || m.Index < r.RaftLog.entries[0].Index {
 		term, err := r.RaftLog.storage.Term(m.Index)
@@ -462,25 +449,20 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 			return
 		}
 	} else {
-		// reject if prevPosition entry not findLastMatch
-		prevPosition, err := r.RaftLog.findByIndex(m.Index)
-		if err != nil || r.RaftLog.entries[prevPosition].Term != m.LogTerm {
+		//reject if prevPosition entry not findLastMatch
+		prevPosition, found := r.RaftLog.findByIndex(m.Index)
+		if !found || r.RaftLog.entries[prevPosition].Term != m.LogTerm {
 			r.appendMsg(r.buildReject(pb.MessageType_MsgAppendResponse, m.From))
 			return
 		}
 	}
 
-	//if len(m.Entries) == 0 {
-	//	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgAppend, m.From, false))
-	//	return
-	//}
-
 	// handle empty entry
 	// find last findLastMatch entry and drop entry, append entry
-	matchPosition, offset := r.RaftLog.findLastMatch(prevPosition, m.Entries)
+	matchPosition, offset := r.RaftLog.findLastMatch(uint64(prevPosition), m.Entries)
 	r.RaftLog.entries = r.RaftLog.entries[:matchPosition+1]
 	for i := offset + 1; i < uint64(len(m.Entries)); i++ {
-		r.RaftLog.entries = append(r.RaftLog.entries, *m.Entries[i])
+		r.RaftLog.appendEntry(m.Entries[i])
 	}
 
 	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false))

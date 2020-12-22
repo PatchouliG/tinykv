@@ -16,7 +16,9 @@ package raft
 
 import (
 	"errors"
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"sort"
 )
 
 // RaftLog manage the log entries, its struct look like:
@@ -58,32 +60,84 @@ type RaftLog struct {
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
+	// all entry in storage is committed
+	index, err := storage.LastIndex()
+	if err != nil {
+		log.Panicf("get storage last index error")
+	}
+	hs := storage.InitialHardState()
+	if err != nil {
+		panic(err)
+	}
+	committed := hs.Commit
+	lastIndex, err := storage.LastIndex()
+	if err != nil {
+		panic(err)
+	}
+	entries := make([]pb.Entry, 0)
+	entriesNotCommitted, err := storage.Entries(committed+1, lastIndex+1)
+	if err != nil {
+		panic(err)
+	}
+	for _, e := range entriesNotCommitted {
+		entries = append(entries, e)
+	}
+
 	return &RaftLog{
 		storage:         storage,
-		committed:       0,
+		committed:       index,
 		applied:         0,
-		stabled:         0,
+		stabled:         index,
 		entries:         make([]pb.Entry, 0),
 		pendingSnapshot: nil,
 	}
 	// Your Code Here (2A).
 }
 
+func (l *RaftLog) updateApplied(appliedIndex uint64) {
+	if appliedIndex > l.committed {
+		panic("apply is bigger than committed")
+	}
+	l.applied = appliedIndex
+}
+func (l *RaftLog) updateCommitted(committed uint64) {
+	if l.committed > l.entries[len(l.entries)-1].Index {
+		panic("committed is bigger than length")
+	}
+	l.committed = committed
+}
+func (l *RaftLog) updateStable(stable uint64) {
+	l.stabled = stable
+}
+
 // We need to compact the log entries in some point of time like
 // storage compact stabled log entries prevent the log entries
 // grow unlimitedly in memory
+// remove all committed entries
 func (l *RaftLog) maybeCompact() {
+	position, found := l.findByIndex(l.committed)
+	if !found {
+		return
+	}
+	l.entries = l.entries[position+1:]
 	// Your Code Here (2C).
 }
 
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
-	// Your Code Here (2A).
-	return nil
+	if len(l.entries) == 0 {
+		return nil
+	}
+	return l.entries[l.stabled+1:]
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
+	if len(l.entries) == 0 {
+		return nil
+	}
+	return l.entries[l.applied+1 : l.committed+1]
+
 	// Your Code Here (2A).
 	return nil
 }
@@ -118,16 +172,6 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
 }
 
-// return entry position
-func (l *RaftLog) findByIndex(index uint64) (uint64, error) {
-	for i := len(l.entries) - 1; i >= 0; i-- {
-		if l.entries[i].Index == index {
-			return uint64(i), nil
-		}
-	}
-	return 0, errors.New("entry not found")
-}
-
 // return position in log , position in entry
 func (l *RaftLog) findLastMatch(beginPosition uint64, entry []*pb.Entry) (uint64, uint64) {
 	i := uint64(0)
@@ -141,8 +185,26 @@ func (l *RaftLog) findLastMatch(beginPosition uint64, entry []*pb.Entry) (uint64
 	return beginPosition + i - 1, i - 1
 }
 
+func (l *RaftLog) findByIndex(index uint64) (int, bool) {
+	if len(l.entries) == 0 {
+		return 0, false
+	}
+
+	res := sort.Search(len(l.entries), func(i int) bool {
+		return l.entries[i].Index == index
+	})
+
+	if res == len(l.entries) {
+		return 0, false
+	}
+	return res, true
+}
+
 func (l *RaftLog) append(entries []*pb.Entry) {
 	for _, e := range entries {
 		l.entries = append(l.entries, *e)
 	}
+}
+func (l *RaftLog) appendEntry(entry *pb.Entry) {
+	l.entries = append(l.entries, *entry)
 }

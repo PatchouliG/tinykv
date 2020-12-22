@@ -47,6 +47,7 @@ var ErrSnapshotTemporarilyUnavailable = errors.New("snapshot is temporarily unav
 type Storage interface {
 	// InitialState returns the saved HardState and ConfState information.
 	InitialState() (pb.HardState, pb.ConfState, error)
+	InitialHardState() pb.HardState
 	// Entries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
@@ -96,6 +97,10 @@ func NewMemoryStorage() *MemoryStorage {
 // InitialState implements the Storage interface.
 func (ms *MemoryStorage) InitialState() (pb.HardState, pb.ConfState, error) {
 	return ms.hardState, *ms.snapshot.Metadata.ConfState, nil
+}
+
+func (ms *MemoryStorage) InitialHardState() pb.HardState {
+	return ms.hardState
 }
 
 // SetHardState saves the current HardState.

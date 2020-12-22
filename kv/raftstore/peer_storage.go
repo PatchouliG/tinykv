@@ -86,6 +86,11 @@ func (ps *PeerStorage) InitialState() (eraftpb.HardState, eraftpb.ConfState, err
 	return *raftState.HardState, util.ConfStateFromRegion(ps.region), nil
 }
 
+func (ps *PeerStorage) InitialHardState() eraftpb.HardState {
+	res, _, _ := ps.InitialState()
+	return res
+}
+
 func (ps *PeerStorage) Entries(low, high uint64) ([]eraftpb.Entry, error) {
 	if err := ps.checkRange(low, high); err != nil || low == high {
 		return nil, err

@@ -18,6 +18,7 @@ import (
 	"errors"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"math/rand"
+	"sort"
 )
 
 // None is a placeholder node ID used when there is no leader.
@@ -255,7 +256,10 @@ func (r *Raft) sendHeartbeat(to uint64) {
 
 func (r *Raft) addNoopEntryToLog() {
 	e := r.buildEmptyEntry()
-	r.RaftLog.appendEntry(&e)
+	r.RaftLog.entries = append(r.RaftLog.entries, e)
+	// update self
+	r.Prs[r.id].Match = r.RaftLog.LastIndex()
+	r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
 }
 
 func (r *Raft) sendVote(to uint64) {
@@ -506,6 +510,9 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 
 func (r *Raft) handlePropose(m pb.Message) {
 	r.RaftLog.append(m.Entries)
+	// update self
+	r.Prs[r.id].Match = r.RaftLog.LastIndex()
+	r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
 }
 func (r *Raft) handleVoteResponse(m pb.Message) {
 	if m.Reject {
@@ -546,6 +553,20 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 			Match: oldPrs.Next - 1,
 			Next:  oldPrs.Next,
 		}
+
+		// update committed
+		var matches []int
+		for _, v := range r.Prs {
+			matches = append(matches, int(v.Match))
+		}
+
+		sort.Ints(matches)
+		m := uint64(matches[((len(matches)-1)/2 + 1)])
+
+		if m > r.RaftLog.committed {
+			r.RaftLog.committed = m
+		}
+
 	} else {
 		var match uint64
 		if oldPrs.Match == 0 {
@@ -586,6 +607,10 @@ func (r *Raft) sendMsgToAll(createMsg func(id uint64)) {
 
 func (r *Raft) appendMsg(message pb.Message) {
 	r.msgs = append(r.msgs, message)
+	if r.State == StateLeader && message.MsgType == pb.MessageType_MsgAppend {
+		r.Prs[r.id].Match = r.RaftLog.LastIndex()
+		r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
+	}
 }
 
 func (r *Raft) compareMsgTerm(msg pb.Message) int64 {

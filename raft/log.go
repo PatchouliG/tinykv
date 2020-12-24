@@ -143,7 +143,23 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 		return nil
 	}
 
-	return l.entries[position+1:]
+	res := l.entries[position+1:]
+	return res
+}
+func (l *RaftLog) unCommittedEntries() []pb.Entry {
+	if len(l.entries) == 0 {
+		return nil
+	}
+	committedPosition, found := l.findByIndex(l.committed)
+	if !found {
+		return nil
+	}
+	stabledPosition, found := l.findByIndex(l.stabled)
+	if !found {
+		return nil
+	}
+	return l.entries[committedPosition+1 : stabledPosition+1]
+
 }
 
 // nextEnts returns all the committed but not applied entries

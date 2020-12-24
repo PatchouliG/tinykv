@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"sort"
 )
@@ -61,34 +60,45 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// all entry in storage is committed
-	index, err := storage.LastIndex()
-	if err != nil {
-		log.Panicf("get storage last index error")
-	}
+	//index, err := storage.LastIndex()
+	//if err != nil {
+	//	panic(err)
+	//}
 	hs := storage.InitialHardState()
-	if err != nil {
-		panic(err)
-	}
+	//if err != nil {
+	//	panic(err)
+	//}
 	committed := hs.Commit
+
 	lastIndex, err := storage.LastIndex()
 	if err != nil {
 		panic(err)
 	}
-	entries := make([]pb.Entry, 0)
-	entriesNotCommitted, err := storage.Entries(committed+1, lastIndex+1)
-	if err != nil {
-		panic(err)
-	}
-	for _, e := range entriesNotCommitted {
-		entries = append(entries, e)
+
+	// copy all uncommitted entry to raft log
+	var entries []pb.Entry
+	for index := lastIndex; index >= 0; index-- {
+		e, err := storage.Entries(index, index+1)
+		if err != nil {
+			// not found, log is empty
+			break
+		}
+		if e[0].Index == committed {
+			entries, err = storage.Entries(index, lastIndex+1)
+			if err != nil {
+				panic(err)
+			}
+			break
+		}
 	}
 
 	return &RaftLog{
-		storage:         storage,
-		committed:       index,
+		storage:   storage,
+		committed: committed,
+		//todo
 		applied:         0,
-		stabled:         index,
-		entries:         make([]pb.Entry, 0),
+		stabled:         lastIndex,
+		entries:         entries,
 		pendingSnapshot: nil,
 	}
 	// Your Code Here (2A).
@@ -128,7 +138,12 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 	if len(l.entries) == 0 {
 		return nil
 	}
-	return l.entries[l.stabled+1:]
+	position, found := l.findByIndex(l.stabled)
+	if !found {
+		return nil
+	}
+
+	return l.entries[position+1:]
 }
 
 // nextEnts returns all the committed but not applied entries
@@ -136,8 +151,15 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	if len(l.entries) == 0 {
 		return nil
 	}
-	return l.entries[l.applied+1 : l.committed+1]
-
+	position, found := l.findByIndex(l.applied)
+	if !found {
+		return nil
+	}
+	for p := position + 1; p < len(l.entries); p++ {
+		if l.entries[p].Index == l.committed {
+			return l.entries[position+1 : p+1]
+		}
+	}
 	// Your Code Here (2A).
 	return nil
 }

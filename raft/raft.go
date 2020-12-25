@@ -533,6 +533,9 @@ func (r *Raft) handlePropose(m pb.Message) {
 	r.Prs[r.id].Match = r.RaftLog.LastIndex()
 	r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
 
+	// update committed if just one node
+	r.updateCommitted()
+
 	r.sendMsgToAll(r.sendAppendWrap)
 }
 func (r *Raft) handleVoteResponse(m pb.Message) {
@@ -575,18 +578,7 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 			Next:  oldPrs.Next,
 		}
 
-		// update committed
-		var matches []int
-		for _, v := range r.Prs {
-			matches = append(matches, int(v.Match))
-		}
-
-		sort.Ints(matches)
-		m := uint64(matches[((len(matches)-1)/2 + 1)])
-
-		if m > r.RaftLog.committed {
-			r.RaftLog.committed = m
-		}
+		r.updateCommitted()
 
 	} else {
 		var match uint64
@@ -601,6 +593,20 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 		}
 	}
 	// append fail
+}
+
+func (r *Raft) updateCommitted() {
+	// update committed
+	var matches []int
+	for _, v := range r.Prs {
+		matches = append(matches, int(v.Match))
+	}
+	sort.Ints(matches)
+	m := uint64(matches[((len(matches) - 1) / 2)])
+
+	if m > r.RaftLog.committed {
+		r.RaftLog.committed = m
+	}
 }
 
 // handleSnapshot handle Snapshot RPC request

@@ -225,13 +225,19 @@ func (r *Raft) sendAppend(to uint64) bool {
 	matched := prs.Match
 	if matched < lastIndex {
 		msg := r.buildMsgWithoutData(pb.MessageType_MsgAppend, to, false)
-		msg.Entries = entryValuesToPoints(r.RaftLog.entries[matched+1:])
+		position, found := r.RaftLog.findByIndex(matched + 1)
+		if !found {
+			panic("not found matched index")
+		}
+
+		msg.Entries = entryValuesToPoints(r.RaftLog.entries[position:])
 		msg.Index = prs.Match
 		t, err := r.RaftLog.Term(prs.Match)
 		if err != nil {
 			panic("error ")
 		}
 		msg.LogTerm = t
+		msg.Commit = r.RaftLog.committed
 		r.appendMsg(msg)
 		//update prs
 		r.Prs[to] = &Progress{
@@ -263,7 +269,15 @@ func (r *Raft) addNoopEntryToLog() {
 }
 
 func (r *Raft) sendVote(to uint64) {
-	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgRequestVote, to, false))
+	voteMsg := r.buildMsgWithoutData(pb.MessageType_MsgRequestVote, to, false)
+	t, err := r.RaftLog.Term(r.RaftLog.LastIndex())
+	if err != nil {
+		panic("fail to get term")
+	}
+
+	voteMsg.LogTerm = t
+	voteMsg.Index = r.RaftLog.LastIndex()
+	r.appendMsg(voteMsg)
 }
 
 // tick advances the internal logical clock by a single tick.
@@ -283,7 +297,7 @@ func (r *Raft) tick() {
 
 	case StateLeader:
 		// todo append retry is 1 logic clock
-		r.sendMsgToAll(r.sendAppendWrap)
+		//r.sendMsgToAll(r.sendAppendWrap)
 		if r.heartbeatElapsed == 0 {
 			r.sendHeartBeatToAll()
 		}
@@ -509,10 +523,17 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 }
 
 func (r *Raft) handlePropose(m pb.Message) {
+	lastIndex := r.RaftLog.LastIndex()
+	for i, e := range m.Entries {
+		e.Index = lastIndex + 1 + uint64(i)
+		e.Term = r.Term
+	}
 	r.RaftLog.append(m.Entries)
 	// update self
 	r.Prs[r.id].Match = r.RaftLog.LastIndex()
 	r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
+
+	r.sendMsgToAll(r.sendAppendWrap)
 }
 func (r *Raft) handleVoteResponse(m pb.Message) {
 	if m.Reject {

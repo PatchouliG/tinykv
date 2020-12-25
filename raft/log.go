@@ -138,12 +138,13 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 	if len(l.entries) == 0 {
 		return nil
 	}
-	position, found := l.findByIndex(l.stabled)
+	// stabled may be 0(init)
+	position, found := l.findByIndex(l.stabled + 1)
 	if !found {
 		return nil
 	}
 
-	res := l.entries[position+1:]
+	res := l.entries[position:]
 	return res
 }
 func (l *RaftLog) unCommittedEntries() []pb.Entry {
@@ -229,10 +230,10 @@ func (l *RaftLog) findByIndex(index uint64) (int, bool) {
 	}
 
 	res := sort.Search(len(l.entries), func(i int) bool {
-		return l.entries[i].Index == index
+		return l.entries[i].Index >= index
 	})
 
-	if res == len(l.entries) {
+	if res == len(l.entries) || l.entries[res].Index != index {
 		return 0, false
 	}
 	return res, true

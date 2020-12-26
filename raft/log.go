@@ -77,13 +77,19 @@ func newLog(storage Storage) *RaftLog {
 
 	// copy all uncommitted entry to raft log
 	var entries []pb.Entry
-	for index := lastIndex; index >= 0; index-- {
+	firstIndex, err := storage.FirstIndex()
+	if err != nil {
+		panic(err)
+	}
+
+	for index := lastIndex; ; index-- {
 		e, err := storage.Entries(index, index+1)
 		if err != nil {
 			// not found, log is empty
 			break
 		}
-		if e[0].Index == committed {
+		// committed may be zero
+		if e[0].Index == committed || index == firstIndex {
 			entries, err = storage.Entries(index, lastIndex+1)
 			if err != nil {
 				panic(err)
@@ -136,12 +142,12 @@ func (l *RaftLog) maybeCompact() {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	if len(l.entries) == 0 {
-		return nil
+		return make([]pb.Entry, 0)
 	}
 	// stabled may be 0(init)
 	position, found := l.findByIndex(l.stabled + 1)
 	if !found {
-		return nil
+		return make([]pb.Entry, 0)
 	}
 
 	res := l.entries[position:]
@@ -213,7 +219,7 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 
 // return position in log , position in entry
 func (l *RaftLog) findLastMatch(beginPosition uint64, entry []*pb.Entry) (uint64, uint64) {
-	i := uint64(0)
+	i := uint64(1)
 	for ; beginPosition+i < uint64(len(l.entries)) && i < uint64(len(entry)); i++ {
 		localEntry := l.entries[beginPosition+i]
 		e := entry[i]

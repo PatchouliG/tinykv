@@ -459,7 +459,7 @@ func (r *Raft) handleMsgUp() {
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 
-	var prevPosition uint64
+	var prevPosition = -1
 	if len(r.RaftLog.entries) == 0 || m.Index < r.RaftLog.entries[0].Index {
 		term, err := r.RaftLog.storage.Term(m.Index)
 		if err != nil || term != m.LogTerm {
@@ -468,20 +468,58 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		}
 	} else {
 		//reject if prevPosition entry not findLastMatch
-		prevPosition, found := r.RaftLog.findByIndex(m.Index)
+		var found bool
+		prevPosition, found = r.RaftLog.findByIndex(m.Index)
 		if !found || r.RaftLog.entries[prevPosition].Term != m.LogTerm {
 			r.appendMsg(r.buildReject(pb.MessageType_MsgAppendResponse, m.From))
 			return
 		}
 	}
 
+	offset := 0
+	for ; offset < len(m.Entries); offset++ {
+		if offset+prevPosition+1 >= len(r.RaftLog.entries) {
+			r.RaftLog.append(m.Entries[offset:])
+			break
+		}
+		e1 := r.RaftLog.entries[offset+prevPosition+1]
+		e2 := m.Entries[offset]
+		if e1.Index != e2.Index || e1.Term != e2.Term {
+			r.RaftLog.entries = r.RaftLog.entries[:offset+prevPosition+1]
+			if len(r.RaftLog.entries) > 0 {
+				lastIndexInLog := r.RaftLog.entries[len(r.RaftLog.entries)-1].Index
+				if lastIndexInLog < r.RaftLog.stabled {
+					r.RaftLog.stabled = lastIndexInLog
+				}
+			} else {
+				r.RaftLog.stabled = 0
+			}
+			r.RaftLog.append(m.Entries[offset:])
+			break
+		}
+	}
+
+	//var offset int
+	//for offset = 0; offset+(prevPosition+1) < len(r.RaftLog.entries) && offset < len(m.Entries); offset++ {
+	//	e1 := r.RaftLog.entries[prevPosition+1+offset]
+	//	e2 := *m.Entries[offset]
+	//
+	//	if e1.Term != e2.Term || e1.Index != e2.Index {
+	//		r.RaftLog.entries = r.RaftLog.entries[:prevPosition+1+offset]
+	//		r.RaftLog.append(m.Entries[offset:])
+	//	}
+	//}
+	//if offset < len(m.Entries) {
+
+	//}
+
 	// handle empty entry
 	// find last findLastMatch entry and drop entry, append entry
-	matchPosition, offset := r.RaftLog.findLastMatch(uint64(prevPosition), m.Entries)
-	r.RaftLog.entries = r.RaftLog.entries[:matchPosition+1]
-	for i := offset + 1; i < uint64(len(m.Entries)); i++ {
-		r.RaftLog.appendEntry(m.Entries[i])
-	}
+	//matchPosition, offset := r.RaftLog.findLastMatch(uint64(prevPosition), m.Entries)
+	//r.RaftLog.entries = r.RaftLog.entries[:matchPosition+1]
+	//for i := offset + 1; i < uint64(len(m.Entries)); i++ {
+	//	r.RaftLog.appendEntry(m.Entries[i])
+	//}
 
 	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false))
 

@@ -386,7 +386,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleMsgUp()
 		case pb.MessageType_MsgAppend:
 			// update state
-			if m.Term > r.Term {
+			// use equal for handle vote success
+			if m.Term >= r.Term {
 				// only append entry as follower
 				r.becomeFollower(m.Term, m.From)
 			}

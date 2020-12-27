@@ -70,7 +70,7 @@ type Ready struct {
 type RawNode struct {
 	Raft          *Raft
 	lastSoftState *SoftState
-	lastHardState *pb.HardState
+	lastHardState pb.HardState
 	lastReady     *Ready
 	// Your Data Here (2A).
 }
@@ -90,7 +90,7 @@ func NewRawNode(config *Config) (*RawNode, error) {
 	return &RawNode{
 		Raft:          raft,
 		lastSoftState: &ss,
-		lastHardState: &hs,
+		lastHardState: hs,
 	}, nil
 	// Your Code Here (2A).
 }
@@ -174,14 +174,32 @@ func (rn *RawNode) ReadyImp() Ready {
 
 	// get uncommitted entries
 	var uncommittedEntries []pb.Entry
-	unCommitted, found := rn.Raft.RaftLog.findByIndex(rn.lastHardState.Commit + 1)
-	if found {
-		for _, e := range rn.Raft.RaftLog.entries[unCommitted:] {
-			if e.Index < rn.Raft.RaftLog.committed {
-				uncommittedEntries = append(uncommittedEntries, e)
-			}
+
+	var uncommitted int
+	if rn.lastHardState.Commit == 0 {
+		uncommitted = 0
+	} else {
+		p, found := rn.Raft.RaftLog.findByIndex(rn.lastHardState.Commit + 1)
+		if !found {
+			uncommitted = len(rn.Raft.RaftLog.entries)
+		} else {
+			uncommitted = p
 		}
 	}
+	for i := uncommitted; i < len(rn.Raft.RaftLog.entries) &&
+		rn.Raft.RaftLog.entries[i].Index <= rn.Raft.RaftLog.committed; i++ {
+		uncommittedEntries = append(uncommittedEntries, rn.Raft.RaftLog.entries[i])
+	}
+
+	// update stabled
+	rn.Raft.RaftLog.stabled = rn.Raft.RaftLog.LastIndex()
+	//for _, e := range rn.Raft.RaftLog.entries[uncommitted:] {
+	//	if e.Index < rn.Raft.RaftLog.committed {
+	//		uncommittedEntries = append(uncommittedEntries, e)
+	//	}
+	//}
+	//uncommittedEntries=rn.Raft.RaftLog.entries[uncommitted:]
+	//}
 
 	ss := &SoftState{
 		Lead:      rn.Raft.Lead,
@@ -192,14 +210,14 @@ func (rn *RawNode) ReadyImp() Ready {
 	} else {
 		rn.lastSoftState = ss
 	}
-	hs := &pb.HardState{
+	hs := pb.HardState{
 		Term:   rn.Raft.Term,
 		Vote:   rn.Raft.Vote,
 		Commit: rn.Raft.RaftLog.committed,
 	}
 
 	if hs.Term == rn.lastHardState.Term && hs.Vote == rn.lastHardState.Vote && hs.Commit == rn.lastHardState.Commit {
-		hs = nil
+		hs = pb.HardState{}
 	} else {
 		rn.lastHardState = hs
 	}
@@ -209,7 +227,7 @@ func (rn *RawNode) ReadyImp() Ready {
 
 	return Ready{
 		SoftState:        ss,
-		HardState:        *hs,
+		HardState:        hs,
 		Entries:          unStableEntries,
 		Snapshot:         pb.Snapshot{},
 		CommittedEntries: uncommittedEntries,
@@ -248,25 +266,8 @@ func (rn *RawNode) Advance(rd Ready) {
 	if len(rd.Entries) > 0 {
 		lastStabled := rd.Entries[len(rd.Entries)-1].Index
 		rn.Raft.RaftLog.stabled = lastStabled
+		rn.lastHardState = rd.HardState
 	}
-	// update committed stable apply in log
-	// Your Code Here (2A).
-	//if len(rd.CommittedEntries) > 0 {
-	//	lastCommitted := rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
-	//	position, found := rn.Raft.RaftLog.findByIndex(lastCommitted)
-	//	if !found {
-	//		panic("not found")
-	//	}
-	//	rn.Raft.RaftLog.committed = uint64(position)
-	//}
-	//if len(rd.Entries) > 0 {
-	//	lastStable := rd.Entries[len(rd.Entries)-1].Index
-	//	position, found := rn.Raft.RaftLog.findByIndex(lastStable)
-	//	if !found {
-	//		panic("not found")
-	//	}
-	//	rn.Raft.RaftLog.committed = uint64(position)
-	//}
 }
 
 // GetProgress return the the Progress of this node and its peers, if this

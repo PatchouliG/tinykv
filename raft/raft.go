@@ -365,7 +365,11 @@ func (r *Raft) becomeLeader() {
 
 	// NOTE: Leader should propose a noop entry on its term
 	r.addNoopEntryToLog()
-	r.sendMsgToAll(r.sendAppendWrap)
+	if len(r.nodes) > 1 {
+		r.sendMsgToAll(r.sendAppendWrap)
+	} else {
+		r.updateCommitted()
+	}
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -515,9 +519,9 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	r.appendMsg(msg)
 
 	// update committed
-
-	if m.Commit > r.RaftLog.committed && lastIndexInMeg(m) > r.RaftLog.committed {
-		r.RaftLog.committed = min(m.Commit, lastIndexInMeg(m))
+	lastIndex := lastIndexInMeg(m)
+	if m.Commit > r.RaftLog.committed && lastIndex > r.RaftLog.committed {
+		r.RaftLog.committed = min(m.Commit, lastIndex)
 	}
 
 	// Your Code Here (2A).

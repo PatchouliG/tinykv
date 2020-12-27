@@ -499,29 +499,12 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		}
 	}
 
-	//var offset int
-	//for offset = 0; offset+(prevPosition+1) < len(r.RaftLog.entries) && offset < len(m.Entries); offset++ {
-	//	e1 := r.RaftLog.entries[prevPosition+1+offset]
-	//	e2 := *m.Entries[offset]
-	//
-	//	if e1.Term != e2.Term || e1.Index != e2.Index {
-	//		r.RaftLog.entries = r.RaftLog.entries[:prevPosition+1+offset]
-	//		r.RaftLog.append(m.Entries[offset:])
-	//	}
-	//}
-	//if offset < len(m.Entries) {
-
-	//}
-
-	// handle empty entry
-	// find last findLastMatch entry and drop entry, append entry
-	//matchPosition, offset := r.RaftLog.findLastMatch(uint64(prevPosition), m.Entries)
-	//r.RaftLog.entries = r.RaftLog.entries[:matchPosition+1]
-	//for i := offset + 1; i < uint64(len(m.Entries)); i++ {
-	//	r.RaftLog.appendEntry(m.Entries[i])
-	//}
-
 	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false))
+
+	// update committed
+	if m.Commit > r.RaftLog.committed {
+		r.RaftLog.committed = min(m.Commit, r.RaftLog.LastIndex())
+	}
 
 	// Your Code Here (2A).
 }

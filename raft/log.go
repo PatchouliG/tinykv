@@ -175,13 +175,15 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 		return nil
 	}
 	// return all if not applied
+	var position int
 	if l.applied == 0 {
-		return l.entries
-	}
-
-	position, found := l.findByIndex(l.applied)
-	if !found {
-		return nil
+		position = -1
+	} else {
+		p, found := l.findByIndex(l.applied)
+		if !found {
+			panic("applied index not found")
+		}
+		position = p
 	}
 
 	for p := position + 1; p < len(l.entries); p++ {

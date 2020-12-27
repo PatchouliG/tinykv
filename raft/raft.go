@@ -514,11 +514,19 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	r.appendMsg(msg)
 
 	// update committed
-	if m.Commit > r.RaftLog.committed {
-		r.RaftLog.committed = min(m.Commit, r.RaftLog.LastIndex())
+
+	if m.Commit > r.RaftLog.committed && lastIndexInMeg(m) > r.RaftLog.committed {
+		r.RaftLog.committed = min(m.Commit, lastIndexInMeg(m))
 	}
 
 	// Your Code Here (2A).
+}
+
+func lastIndexInMeg(m pb.Message) uint64 {
+	if len(m.Entries) == 0 {
+		return m.Index
+	}
+	return m.Entries[len(m.Entries)-1].Index
 }
 
 // handleHeartbeat handle Heartbeat RPC request

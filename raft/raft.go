@@ -506,7 +506,9 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		}
 	}
 
-	r.appendMsg(r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false))
+	msg:=r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false)
+	msg.Index=r.RaftLog.LastIndex()
+	r.appendMsg(msg)
 
 	// update committed
 	if m.Commit > r.RaftLog.committed {
@@ -602,15 +604,14 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 	// append success
 	if !m.Reject {
 		r.Prs[nodeId] = &Progress{
-			Match: oldPrs.Next - 1,
-			Next:  oldPrs.Next,
+			Match: m.Index,
+			Next:  m.Index+1,
 		}
 
 		res := r.updateCommitted()
 		if res {
 			r.sendMsgToAll(r.sendAppendWrap)
 		}
-
 	} else {
 		var match uint64
 		if oldPrs.Match == 0 {
@@ -636,6 +637,15 @@ func (r *Raft) updateCommitted() bool {
 	}
 	sort.Ints(matches)
 	m := uint64(matches[((len(matches) - 1) / 2)])
+
+	t, err := r.RaftLog.Term(m)
+	if err != nil {
+		panic("term not found")
+	}
+
+	if t != r.Term {
+		return false
+	}
 
 	if m > r.RaftLog.committed {
 		r.RaftLog.committed = m

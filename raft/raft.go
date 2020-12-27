@@ -223,31 +223,38 @@ func (r *Raft) sendAppend(to uint64) bool {
 	lastIndex := r.RaftLog.LastIndex()
 	prs := r.Prs[to]
 	matched := prs.Match
-	if matched < lastIndex {
-		msg := r.buildMsgWithoutData(pb.MessageType_MsgAppend, to, false)
-		position, found := r.RaftLog.findByIndex(matched + 1)
+	//if matched < lastIndex {
+	msg := r.buildMsgWithoutData(pb.MessageType_MsgAppend, to, false)
+	var position int
+	// send empty append,update follower committed index
+	if matched == r.RaftLog.LastIndex() {
+		position = len(r.RaftLog.entries)
+	} else {
+		p, found := r.RaftLog.findByIndex(matched + 1)
 		if !found {
 			panic("not found matched index")
 		}
-
-		msg.Entries = entryValuesToPoints(r.RaftLog.entries[position:])
-		msg.Index = prs.Match
-		t, err := r.RaftLog.Term(prs.Match)
-		if err != nil {
-			panic("error ")
-		}
-		msg.LogTerm = t
-		msg.Commit = r.RaftLog.committed
-		r.appendMsg(msg)
-		//update prs
-		r.Prs[to] = &Progress{
-			Match: prs.Match,
-			Next:  lastIndex + 1,
-		}
-		return true
+		position = p
 	}
+
+	msg.Entries = entryValuesToPoints(r.RaftLog.entries[position:])
+	msg.Index = prs.Match
+	t, err := r.RaftLog.Term(prs.Match)
+	if err != nil {
+		panic("error ")
+	}
+	msg.LogTerm = t
+	msg.Commit = r.RaftLog.committed
+	r.appendMsg(msg)
+	//update prs
+	r.Prs[to] = &Progress{
+		Match: prs.Match,
+		Next:  lastIndex + 1,
+	}
+	return true
+	//}
 	// Your Code Here (2A).
-	return false
+	//return false
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
@@ -599,7 +606,10 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 			Next:  oldPrs.Next,
 		}
 
-		r.updateCommitted()
+		res := r.updateCommitted()
+		if res {
+			r.sendMsgToAll(r.sendAppendWrap)
+		}
 
 	} else {
 		var match uint64
@@ -612,11 +622,13 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 			Match: match,
 			Next:  match + 1,
 		}
+		r.sendAppend(m.From)
 	}
 	// append fail
 }
 
-func (r *Raft) updateCommitted() {
+// return true if update
+func (r *Raft) updateCommitted() bool {
 	// update committed
 	var matches []int
 	for _, v := range r.Prs {
@@ -627,7 +639,9 @@ func (r *Raft) updateCommitted() {
 
 	if m > r.RaftLog.committed {
 		r.RaftLog.committed = m
+		return true
 	}
+	return false
 }
 
 // handleSnapshot handle Snapshot RPC request
@@ -697,8 +711,8 @@ func (r *Raft) buildMsgWithoutData(messageType pb.MessageType, to uint64, reject
 
 func entryValuesToPoints(entries []pb.Entry) []*pb.Entry {
 	res := make([]*pb.Entry, 0)
-	for _, e := range entries {
-		res = append(res, &e)
+	for i := range entries {
+		res = append(res, &entries[i])
 	}
 	return res
 }

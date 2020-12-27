@@ -126,6 +126,8 @@ type Raft struct {
 	// votes records
 	votes map[uint64]bool
 
+	voteFailCount int
+
 	// msgs need to send
 	msgs []pb.Message
 
@@ -339,6 +341,7 @@ func (r *Raft) becomeCandidate() {
 	r.Vote = r.id
 	r.electionElapsed = 0
 	r.randomElectionTimeout = randomTimeout(r.electionTimeout)
+	r.voteFailCount = 0
 
 	// Your Code Here (2A).
 }
@@ -506,8 +509,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		}
 	}
 
-	msg:=r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false)
-	msg.Index=r.RaftLog.LastIndex()
+	msg := r.buildMsgWithoutData(pb.MessageType_MsgAppendResponse, m.From, false)
+	msg.Index = r.RaftLog.LastIndex()
 	r.appendMsg(msg)
 
 	// update committed
@@ -570,6 +573,11 @@ func (r *Raft) handlePropose(m pb.Message) {
 }
 func (r *Raft) handleVoteResponse(m pb.Message) {
 	if m.Reject {
+		r.voteFailCount += 1
+		// vote fail, turn to follower
+		if r.voteFailCount >= len(r.nodes)/2+1 {
+			r.becomeFollower(r.Term, None)
+		}
 		return
 	}
 	r.votes[m.From] = true
@@ -605,7 +613,7 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 	if !m.Reject {
 		r.Prs[nodeId] = &Progress{
 			Match: m.Index,
-			Next:  m.Index+1,
+			Next:  m.Index + 1,
 		}
 
 		res := r.updateCommitted()

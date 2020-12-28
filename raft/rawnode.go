@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -72,6 +71,7 @@ type RawNode struct {
 	lastSoftState *SoftState
 	lastHardState pb.HardState
 	lastReady     *Ready
+	firstReady    bool
 	// Your Data Here (2A).
 }
 
@@ -79,19 +79,21 @@ type RawNode struct {
 func NewRawNode(config *Config) (*RawNode, error) {
 	raft := newRaft(config)
 
-	hs, _, err := config.Storage.InitialState()
-	ss := SoftState{
-		Lead:      raft.Lead,
-		RaftState: raft.State,
-	}
-	if err != nil {
-		panic("get storage init state error")
-	}
 	return &RawNode{
-		Raft:          raft,
-		lastSoftState: &ss,
-		lastHardState: hs,
+		Raft: raft,
+		lastSoftState: &SoftState{
+			Lead:      raft.Lead,
+			RaftState: raft.State,
+		},
+		lastHardState: pb.HardState{
+			Term: raft.Term,
+			Vote: raft.Vote,
+			//@continue
+			Commit: raft.RaftLog.committed,
+		},
+		firstReady: true,
 	}, nil
+
 	// Your Code Here (2A).
 }
 
@@ -176,8 +178,11 @@ func (rn *RawNode) ReadyImp() Ready {
 	var uncommittedEntries []pb.Entry
 
 	var uncommitted int
-	if rn.lastHardState.Commit == 0 {
+	// first ready, need to commit all entry in log
+	// not need to commit applied(todo)
+	if rn.lastHardState.Commit == 0 || rn.firstReady {
 		uncommitted = 0
+		rn.firstReady = false
 	} else {
 		p, found := rn.Raft.RaftLog.findByIndex(rn.lastHardState.Commit + 1)
 		if !found {
@@ -193,19 +198,12 @@ func (rn *RawNode) ReadyImp() Ready {
 
 	// update stabled
 	rn.Raft.RaftLog.stabled = rn.Raft.RaftLog.LastIndex()
-	//for _, e := range rn.Raft.RaftLog.entries[uncommitted:] {
-	//	if e.Index < rn.Raft.RaftLog.committed {
-	//		uncommittedEntries = append(uncommittedEntries, e)
-	//	}
-	//}
-	//uncommittedEntries=rn.Raft.RaftLog.entries[uncommitted:]
-	//}
 
 	ss := &SoftState{
 		Lead:      rn.Raft.Lead,
 		RaftState: rn.Raft.State,
 	}
-	if *ss == *rn.lastSoftState {
+	if rn.lastSoftState != nil && *ss == *rn.lastSoftState {
 		ss = nil
 	} else {
 		rn.lastSoftState = ss
@@ -216,7 +214,7 @@ func (rn *RawNode) ReadyImp() Ready {
 		Commit: rn.Raft.RaftLog.committed,
 	}
 
-	if hs.Term == rn.lastHardState.Term && hs.Vote == rn.lastHardState.Vote && hs.Commit == rn.lastHardState.Commit {
+	if isHardStateEqual(hs, rn.lastHardState) {
 		hs = pb.HardState{}
 	} else {
 		rn.lastHardState = hs
@@ -253,9 +251,6 @@ func (rn *RawNode) HasReady() bool {
 	//return false
 }
 
-//func hardStateIsEmpty(hs pb.HardState) bool {
-//	return hs.Commit == 0 && hs.Term == 0 && hs.Vote == None
-//}
 func snapshotIsEmpty(snapshot pb.Snapshot) bool {
 	return len(snapshot.Data) == 0 && snapshot.Metadata == nil
 }

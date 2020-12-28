@@ -225,18 +225,18 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
 }
 
-// return position in log , position in entry
-func (l *RaftLog) findLastMatch(beginPosition uint64, entry []*pb.Entry) (uint64, uint64) {
-	i := uint64(1)
-	for ; beginPosition+i < uint64(len(l.entries)) && i < uint64(len(entry)); i++ {
-		localEntry := l.entries[beginPosition+i]
-		e := entry[i]
-		if localEntry.Index != e.Index || localEntry.Term != e.Term {
-			break
-		}
-	}
-	return beginPosition + i - 1, i - 1
-}
+//// return position in log , position in entry
+//func (l *RaftLog) findLastMatch(beginPosition uint64, entry []*pb.Entry) (uint64, uint64) {
+//	i := uint64(1)
+//	for ; beginPosition+i < uint64(len(l.entries)) && i < uint64(len(entry)); i++ {
+//		localEntry := l.entries[beginPosition+i]
+//		e := entry[i]
+//		if localEntry.Index != e.Index || localEntry.Term != e.Term {
+//			break
+//		}
+//	}
+//	return beginPosition + i - 1, i - 1
+//}
 
 func (l *RaftLog) findByIndex(index uint64) (int, bool) {
 	if len(l.entries) == 0 {

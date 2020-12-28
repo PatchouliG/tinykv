@@ -197,7 +197,7 @@ func newRaft(c *Config) *Raft {
 		// init as a follower
 		State:                 StateFollower,
 		votes:                 nil,
-		msgs:                  make([]pb.Message, 0),
+		msgs:                  nil,
 		Lead:                  None,
 		heartbeatTimeout:      c.HeartbeatTick,
 		electionTimeout:       c.ElectionTick,
@@ -597,8 +597,6 @@ func (r *Raft) handleVoteResponse(m pb.Message) {
 	if len(r.votes) >= len(r.nodes)/2+1 {
 		r.becomeLeader()
 	}
-	//r.addNoopEntryToLog()
-	//r.sendMsgToAll(r.sendHeartbeat)
 }
 
 func (r *Raft) handleVoter(m pb.Message) {
